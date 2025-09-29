@@ -22,17 +22,31 @@ from typing import Dict, Any, List, Optional
 from pathlib import Path
 import structlog
 
-from .formats.mbes import parse_mbes_file
-from .formats.sbet import parse_sbet_file
-from .formats.lidar import parse_lidar_file
-from .exporters.netcdf_exporter import export_to_netcdf
-from .exporters.bag_exporter import export_to_bag
-from .exporters.geotiff_exporter import export_to_geotiff
-from .anonymize import anonymize_data
-from .overlay import apply_overlay
-from ..qc.model_stub import predict_anomalies
-from ..qc.rules import apply_qc_rules
-from ..utils.geo import reproject_to_wgs84, create_bathymetric_surface
+try:
+    from .formats.mbes import parse_mbes_file
+    from .formats.sbet import parse_sbet_file
+    from .formats.lidar import parse_lidar_file
+    from .exporters.netcdf_exporter import export_to_netcdf
+    from .exporters.bag_exporter import export_to_bag
+    from .exporters.geotiff_exporter import export_to_geotiff
+    from .anonymize import anonymize_data
+    from .overlay import apply_overlay
+    from ..qc.model_stub import predict_anomalies
+    from ..qc.rules import apply_qc_rules
+    from ..utils.geo import reproject_to_wgs84, create_bathymetric_surface
+except ImportError:
+    # Fallback for when running as script
+    from formats.mbes import parse_mbes_file
+    from formats.sbet import parse_sbet_file
+    from formats.lidar import parse_lidar_file
+    from exporters.netcdf_exporter import export_to_netcdf
+    from exporters.bag_exporter import export_to_bag
+    from exporters.geotiff_exporter import export_to_geotiff
+    from anonymize import anonymize_data
+    from overlay import apply_overlay
+    from qc.model_stub import predict_anomalies
+    from qc.rules import apply_qc_rules
+    from utils.geo import reproject_to_wgs84, create_bathymetric_surface
 
 logger = structlog.get_logger(__name__)
 

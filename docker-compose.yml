@@ -1,0 +1,175 @@
+version: '3.8'
+
+services:
+  # API Backend Service
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: open-ocean-mapper-api
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONPATH=/app/src
+      - LOG_LEVEL=INFO
+      - SEABED2030_API_KEY=${SEABED2030_API_KEY:-}
+      - SEABED2030_ENDPOINT=${SEABED2030_ENDPOINT:-https://api.seabed2030.org}
+      - ANONYMIZATION_SALT=${ANONYMIZATION_SALT:-default_salt}
+      - GPS_JITTER_RADIUS=${GPS_JITTER_RADIUS:-50}
+      - MAX_CONCURRENT_JOBS=${MAX_CONCURRENT_JOBS:-5}
+      - MAX_FILE_SIZE_MB=${MAX_FILE_SIZE_MB:-100}
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./config:/app/config
+    networks:
+      - open-ocean-mapper
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      - redis
+
+  # Frontend Service
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: open-ocean-mapper-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - REACT_APP_API_URL=http://localhost:8000
+    networks:
+      - open-ocean-mapper
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      - api
+
+  # Redis for job queue and caching
+  redis:
+    image: redis:7-alpine
+    container_name: open-ocean-mapper-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - open-ocean-mapper
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+
+  # Worker service for background processing
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: open-ocean-mapper-worker
+    environment:
+      - PYTHONPATH=/app/src
+      - LOG_LEVEL=INFO
+      - WORKER_MODE=true
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./config:/app/config
+    networks:
+      - open-ocean-mapper
+    restart: unless-stopped
+    depends_on:
+      - redis
+      - api
+    command: python -m src.tasks.worker
+
+  # Database for job tracking (optional)
+  postgres:
+    image: postgres:15-alpine
+    container_name: open-ocean-mapper-db
+    environment:
+      - POSTGRES_DB=open_ocean_mapper
+      - POSTGRES_USER=oceanmapper
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-oceanmapper123}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - open-ocean-mapper
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oceanmapper"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    ports:
+      - "5432:5432"
+
+  # Monitoring with Prometheus (optional)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: open-ocean-mapper-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    networks:
+      - open-ocean-mapper
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+
+  # Grafana for visualization (optional)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: open-ocean-mapper-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    networks:
+      - open-ocean-mapper
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+
+volumes:
+  redis_data:
+    driver: local
+  postgres_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  open-ocean-mapper:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
